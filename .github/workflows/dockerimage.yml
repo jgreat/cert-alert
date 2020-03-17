@@ -1,0 +1,25 @@
+name: Build Ngrok Image
+
+on:
+  repository_dispatch: {}
+  push:
+    tags:
+      - "*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Build and Publish Image
+      uses: elgohr/Publish-Docker-Github-Action@master
+      env:
+        VERSION: ${{ github.ref }}
+      with:
+        name: jgreat/cert-alert
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        buildargs: VERSION
+        buildoptions: --ulimit memlock=-1
+        tags: ${{ env.VERSION }},latest
