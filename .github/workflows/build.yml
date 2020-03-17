@@ -1,4 +1,4 @@
-name: Build Ngrok Image
+name: Build cert-alert
 
 on:
   repository_dispatch: {}
@@ -12,10 +12,12 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - name: Setup Env
+      run: |
+        echo "::set-env name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)"
+
     - name: Build and Publish Image
       uses: elgohr/Publish-Docker-Github-Action@master
-      env:
-        VERSION: ${{ github.ref }}
       with:
         name: jgreat/cert-alert
         username: ${{ secrets.DOCKER_USERNAME }}
