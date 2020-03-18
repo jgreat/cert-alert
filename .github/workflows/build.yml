@@ -39,7 +39,7 @@ jobs:
     - name: Create Index
       uses: WyriHaximus/github-action-helm3@master
       with:
-        exec: helm repo index --url https://charts.jgreat.me --merge ./build/old-index.yaml ./build/package
+        exec: helm repo index --url http://charts.jgreat.me --merge ./build/old-index.yaml ./build/package
 
     - name: Upload to S3
       uses: jakejarvis/s3-sync-action@master
