@@ -1,0 +1,44 @@
+# Default values for cert-alert.
+
+# Create an app and copy the token here
+# See https://github.com/jgreat/cert-alert#setting-up-slack
+slackToken: ""
+
+# Alert x days before cert expires.
+# cert-manager waits until 30 days before expiration.
+renewBefore: 29
+
+# List of hostnames to check
+# subjects: []
+
+schedule: "@daily"
+
+image:
+  repository: jgreat/cert-alert
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

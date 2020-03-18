@@ -16,4 +16,6 @@ vendor/
 .vscode/
 
 cert-alert
+
 env.sh
+build/

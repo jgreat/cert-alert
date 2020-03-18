@@ -1,0 +1,56 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: {{ include "cert-alert.fullname" . }}
+  labels:
+    {{- include "cert-alert.labels" . | nindent 4 }}
+spec:
+  jobTemplate:
+    metadata:
+      name: {{ include "cert-alert.fullname" . }}
+      labels:
+        {{- include "cert-alert.labels" . | nindent 8 }}
+    spec:
+      backoffLimit: 1
+      completions: 1
+      template:
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: {{ .Chart.Name }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              env:
+                {{- if .Values.slackToken }}
+                - name: SLACK_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "cert-alert.fullname" . }}
+                      key: slack-token
+                {{- end }}
+                - name: RENEW_BEFORE
+                  value: {{ quote .Values.renewBefore }}
+                - name: SUBJECTS
+                  value: "{{ required ".Values.subjects is required" .Values.subjects | join "," }}"
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          restartPolicy: Never
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+  schedule: {{ quote .Values.schedule }}
+  concurrencyPolicy: Replace

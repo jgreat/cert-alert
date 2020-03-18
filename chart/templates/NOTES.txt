@@ -1,0 +1,4 @@
+CronJob set up.
+See kubectl for status
+
+kubectl -n {{ .Release.Namespace }} get cronjob {{ include "cert-alert.fullname" . }}

@@ -47,6 +47,9 @@ func main() {
 		fmt.Println("Error: --subjects or $SUBJECTS required")
 		os.Exit(1)
 	}
+	if *flags.renewBefore == "" {
+		*flags.renewBefore = "30"
+	}
 
 	err := run(flags)
 	if err != nil {
