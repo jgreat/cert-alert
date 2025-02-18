@@ -12,8 +12,10 @@ Send alerts to slack if --slack-token is defined.
 Flags:
   --help                     Show this message
   --slack-token=STRING       Token for slack. Will post to all channels @cert-alert is invited to. ($SLACK_TOKEN)
-  --renew-before=30          Renew days before cert expiration ($RENEW_BEFORE)
+  --renew-before=10          Renew days before cert expiration ($RENEW_BEFORE)
   --subjects=SUBJECTS,...    List of certificate subjects (hostnames) to check. ($SUBJECTS)
+  --address=IP:PORT          Use IP:PORT address listed instead of DNS lookup to connect to server ($ADDRESS)
+  --debug                    Debug logging
   --version                  Show version and exit
 
 Version: 0.0.1
@@ -77,7 +79,7 @@ Add the slack token environment variable when you run the docker container.
 
 ## Building Locally
 
-Golang 1.14
+Golang 1.24
 
 ```
 go clean
@@ -87,8 +89,6 @@ go build -v -ldflags "-X 'main.version=$VERSION'"
 
 ## Building with Docker
 
-Need to specify ulimit memlock due to bug https://github.com/golang/go/issues/37436
-
 ```
-docker build --ulimit memlock=-1 --build-arg VERSION=${VERSION} -t jgreat/cert-alert .
+docker build --build-arg VERSION=${VERSION} -t jgreat/cert-alert .
 ```

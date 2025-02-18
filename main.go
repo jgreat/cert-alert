@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/x509"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"golang.org/x/exp/slices"
 )
 
 var version string = ""
@@ -25,7 +28,9 @@ type cliGlobal struct {
 	slackToken  *string
 	renewBefore *string
 	subjects    *string
+	address     *string
 	version     *bool
+	debug       *bool
 }
 
 func main() {
@@ -33,7 +38,9 @@ func main() {
 	flags.slackToken = flag.String("slack-token", os.Getenv("SLACK_TOKEN"), "")
 	flags.renewBefore = flag.String("renew-before", os.Getenv("RENEW_BEFORE"), "")
 	flags.subjects = flag.String("subjects", os.Getenv("SUBJECTS"), "")
+	flags.address = flag.String("address", os.Getenv("ADDRESS"), "")
 	flags.version = flag.Bool("version", false, "")
+	flags.debug = flag.Bool("debug", false, "")
 
 	flag.CommandLine.Usage = help
 	flag.Parse()
@@ -51,9 +58,26 @@ func main() {
 		*flags.renewBefore = "30"
 	}
 
+	// Default to INFO level logging
+	logLevel := &slog.LevelVar{}
+
+	// Set log level to DEBUG if --debug flag is set
+	if *flags.debug {
+		logLevel.Set(slog.LevelDebug)
+	}
+
+	// Set up logger
+	logOpts := &slog.HandlerOptions{
+		Level: logLevel,
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, logOpts))
+	slog.SetDefault(logger)
+
+	// Run the app
 	err := run(flags)
 	if err != nil {
-		log.Fatalf("%v", err)
+		slog.Error(fmt.Sprintf("%v", err))
+		os.Exit(1)
 	}
 }
 
@@ -68,6 +92,8 @@ func help() {
 	fmt.Println("  --slack-token=STRING       Token for slack. Will post to all channels @cert-alert is invited to. ($SLACK_TOKEN)")
 	fmt.Println("  --renew-before=30          Renew days before cert expiration ($RENEW_BEFORE)")
 	fmt.Println("  --subjects=SUBJECTS,...    List of certificate subjects (hostnames) to check. ($SUBJECTS)")
+	fmt.Println("  --address=ADDRESS          Use IP:PORT address listed instead of DNS lookup to connect to server ($ADDRESS)")
+	fmt.Println("  --debug                    Enable debug logging")
 	fmt.Println("  --version                  Show version and exit")
 	fmt.Println("")
 	fmt.Printf("Version: %v\n", version)
@@ -76,23 +102,40 @@ func help() {
 
 // Run DefaultCmd - Default command for Kong CLI framework.
 func run(global *cliGlobal) error {
+
+	slog.Debug("Checking certificates for expiration")
 	slackMessageAttachments := []slack.Attachment{}
 
 	// break down subjects
 	subjects := strings.Split(*global.subjects, ",")
 
 	for _, subject := range subjects {
-		client := &http.Client{}
+		slog.Debug(fmt.Sprintf("Checking %v", subject))
 		subjectLink := fmt.Sprintf("https://%v", subject)
+
+		// drop the first element from the domain name to get the base domain and add * to the front.
+		subjectSplit := strings.Split(subject, ".")[1:]
+		subjectSplit = slices.Insert(subjectSplit, 0, "*")
+		subjectStarDomain := strings.Join(subjectSplit, ".")
+
+		// Create a custom HTTP client if the address flag is provided
+		var client *http.Client
+		if *global.address != "" {
+			transport := createCustomTransport(*global.address)
+			client = &http.Client{Transport: transport}
+		} else {
+			client = &http.Client{}
+		}
 
 		resp, err := client.Head(subjectLink)
 		if err != nil {
-			log.Printf("%v", err)
+			slog.Error(fmt.Sprintf("%v", err))
 			continue
 		}
 		defer resp.Body.Close()
 
 		certs := resp.TLS.PeerCertificates
+		slog.Debug(fmt.Sprintf("Found %v certificates", len(certs)))
 
 		for _, cert := range certs {
 			pastDue := false
@@ -102,40 +145,50 @@ func run(global *cliGlobal) error {
 				return err
 			}
 
+			slog.Debug(fmt.Sprintf("CommonName %v - DNSNames %v", cert.Subject.CommonName, cert.DNSNames))
+
 			if subject == cert.Subject.CommonName {
 				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
 			} else if contains(cert.DNSNames, subject) {
 				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+			} else if contains(cert.DNSNames, subjectStarDomain) {
+				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
 			} else {
-				// probably chain cert.
+				slog.Debug("Subject not found, probably chain cert")
 				continue
 			}
 
 			if pastDue {
-				log.Printf("%v - expires on: %v - renew before %v [ PastDue ]", subject, cert.NotAfter, certDates.renewBeforeDate)
+				slog.Info(
+					"cert info found",
+					"status", "PastDue",
+					"subject", subject,
+					"expires_on", fmt.Sprintf("%v", cert.NotAfter),
+					"renew_before", fmt.Sprintf("%v", certDates.renewBeforeDate),
+				)
 				attachment := slack.Attachment{
 					Title:     subject,
 					TitleLink: subjectLink,
 					Pretext:   fmt.Sprintf(":warning: TLS cert for %v will expire in less than %v days.", subject, renewBefore),
 					Color:     "danger",
 					Fields: []slack.AttachmentField{
-						slack.AttachmentField{
+						{
 							Title: "Certificate Expires",
 							Value: certDates.expirationDate.UTC().Format("Mon Jan 2 15:04:05 MST 2006"),
 						},
-						slack.AttachmentField{
+						{
 							Title: "Certificate Renew By",
 							Value: certDates.renewBeforeDate.UTC().Format("Mon Jan 2 15:04:05 MST 2006"),
 						},
-						slack.AttachmentField{
+						{
 							Title: "Certificate Issued By",
 							Value: cert.Issuer.CommonName,
 						},
-						slack.AttachmentField{
+						{
 							Title: "Subject Common Name",
 							Value: cert.Subject.CommonName,
 						},
-						slack.AttachmentField{
+						{
 							Title: "Subject Alternative Names",
 							Value: strings.Join(cert.DNSNames, "\n"),
 						},
@@ -143,7 +196,13 @@ func run(global *cliGlobal) error {
 				}
 				slackMessageAttachments = append(slackMessageAttachments, attachment)
 			} else {
-				log.Printf("%v - expires on: %v - renew before %v [ OK ]", subject, cert.NotAfter, certDates.renewBeforeDate)
+				slog.Info(
+					"cert info found",
+					"status", "OK",
+					"subject", subject,
+					"expires_on", fmt.Sprintf("%v", cert.NotAfter),
+					"renew_before", fmt.Sprintf("%v", certDates.renewBeforeDate),
+				)
 			}
 		}
 	}
@@ -167,7 +226,8 @@ func contains(s []string, item string) bool {
 }
 
 // isAfterRenewDate - returns false if today is before the renew date (good)
-//                    true if after renew date (bad)
+//
+//	true if after renew date (bad)
 func isAfterRenewDate(cert *x509.Certificate, renewBefore int) (bool, *certificateDates) {
 	now := time.Now()
 	renewBeforeDate := cert.NotAfter.AddDate(0, 0, -renewBefore)
@@ -203,9 +263,19 @@ func sendSlackMessage(token string, message []slack.Attachment) error {
 				if err != nil {
 					return fmt.Errorf("ERROR: Slack PostMessage: %v", err)
 				}
-				log.Printf("Message successfully sent to channel %s at %s", channelID, timestamp)
+				slog.Info(fmt.Sprintf("Message successfully sent to channel %s at %s", channelID, timestamp))
 			}
 		}
 	}
 	return nil
+}
+
+func createCustomTransport(address string) *http.Transport {
+	dialer := &net.Dialer{}
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Use the provided address instead of resolving the hostname
+			return dialer.DialContext(ctx, network, address)
+		},
+	}
 }

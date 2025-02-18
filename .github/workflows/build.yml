@@ -10,44 +10,29 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
-    - name: Setup Env
-      run: |
-        export VERSION=$(echo $GITHUB_REF | cut -d / -f 3)
-        echo "::set-env name=VERSION::$VERSION"
-        mkdir -p build/package
-        cp -R ./chart ./build
-        sed -i "s/%VERSION%/$VERSION/g" ./build/chart/Chart.yaml
-        curl -f -H 'Cache-Control: max-age=0,no-cache' "http://charts.jgreat.me/index.yaml" -o ./build/old-index.yaml
-
-    - name: Build and Publish Image
-      uses: elgohr/Publish-Docker-Github-Action@master
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v5
       with:
-        name: jgreat/cert-alert
+        images: jgreat/cert-alert
+        flavor: latest=true
+        tags: type=semver,pattern={{version}}
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
-        buildargs: VERSION
-        buildoptions: --ulimit memlock=-1
-        tags: ${{ env.VERSION }},latest
 
-    - name: Package Chart
-      uses: WyriHaximus/github-action-helm3@master
-      with:
-        exec: helm package -d ./build/package ./build/chart
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-    - name: Create Index
-      uses: WyriHaximus/github-action-helm3@master
+    - name: Build and push
+      uses: docker/build-push-action@v6
       with:
-        exec: helm repo index --url http://charts.jgreat.me --merge ./build/old-index.yaml ./build/package
-
-    - name: Upload to S3
-      uses: jakejarvis/s3-sync-action@master
-      with:
-        args: --acl public-read
-      env:
-        AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: us-east-2
-        SOURCE_DIR: ./build/package
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}

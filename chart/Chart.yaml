@@ -2,5 +2,5 @@ apiVersion: v2
 name: cert-alert
 description: Simple service to check a list of domains to see if the certs are about to expire. Run as a scheduled job (cron) to check your certs on a regular basis.
 type: application
-version: %VERSION%
-appVersion: %VERSION%
+version: 0.0.0
+appVersion: 0.0.0

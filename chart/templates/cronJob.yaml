@@ -1,4 +1,4 @@
-apiVersion: batch/v1beta1
+apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: {{ include "cert-alert.fullname" . }}
@@ -25,18 +25,14 @@ spec:
                 {{- toYaml .Values.securityContext | nindent 16 }}
               image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
-              env:
-                {{- if .Values.slackToken }}
-                - name: SLACK_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: {{ include "cert-alert.fullname" . }}
-                      key: slack-token
-                {{- end }}
-                - name: RENEW_BEFORE
-                  value: {{ quote .Values.renewBefore }}
-                - name: SUBJECTS
-                  value: "{{ required ".Values.subjects is required" .Values.subjects | join "," }}"
+              envFrom:
+              - configMapRef:
+                  name: {{ include "cert-alert.fullname" . }}
+              - secretRef:
+                  name: {{ include "cert-alert.fullname" . }}
+              - secretRef:
+                  name: {{ .Values.secret.externalName }}
+                  optional: true
               resources:
                 {{- toYaml .Values.resources | nindent 16 }}
           restartPolicy: Never

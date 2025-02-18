@@ -2,14 +2,22 @@
 
 # Create an app and copy the token here
 # See https://github.com/jgreat/cert-alert#setting-up-slack
-slackToken: ""
+secret:
+  # optional external secret
+  externalName: cert-alert
+  # Included secret data.
+  data:
+    # SLACK_TOKEN: ""
 
-# Alert x days before cert expires.
-# cert-manager waits until 30 days before expiration.
-renewBefore: 29
-
-# List of hostnames to check
-# subjects: []
+configMap:
+  data:
+    # Alert x days before cert expires. cert-manager waits until 30 days before expiration.
+    RENEW_BEFORE: "10"
+    # comma separated of hostnames to check
+    SUBJECTS: ""
+    # IP:PORT to check instead of DNS name
+    # If you set this all hostnames under SUBJECTS will use this address.
+    ADDRESS: ""
 
 schedule: "@daily"
 
