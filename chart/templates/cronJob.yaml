@@ -5,6 +5,8 @@ metadata:
   labels:
     {{- include "cert-alert.labels" . | nindent 4 }}
 spec:
+  schedule: {{ quote .Values.schedule }}
+  concurrencyPolicy: Replace
   jobTemplate:
     metadata:
       name: {{ include "cert-alert.fullname" . }}
@@ -15,15 +17,13 @@ spec:
       completions: 1
       template:
         spec:
-          {{- with .Values.imagePullSecrets }}
           imagePullSecrets:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- toYaml .Values.imagePullSecrets | nindent 12 }}
           containers:
-            - name: {{ .Chart.Name }}
+            - name: cert-alert
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}
-              image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               envFrom:
               - configMapRef:
@@ -36,17 +36,9 @@ spec:
               resources:
                 {{- toYaml .Values.resources | nindent 16 }}
           restartPolicy: Never
-          {{- with .Values.nodeSelector }}
           nodeSelector:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.affinity }}
+            {{- toYaml .Values.nodeSelector | nindent 12 }}
           affinity:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.tolerations }}
+            {{- toYaml .Values.affinity | nindent 12 }}
           tolerations:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-  schedule: {{ quote .Values.schedule }}
-  concurrencyPolicy: Replace
+            {{- toYaml .Values.tolerations | nindent 12 }}
