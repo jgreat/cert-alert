@@ -9,12 +9,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/slack-go/slack"
-	"golang.org/x/exp/slices"
 )
 
 var version string = ""
@@ -111,6 +111,7 @@ func run(global *cliGlobal) error {
 
 	for _, subject := range subjects {
 		slog.Debug(fmt.Sprintf("Checking %v", subject))
+		certFound := false
 		subjectLink := fmt.Sprintf("https://%v", subject)
 
 		// drop the first element from the domain name to get the base domain and add * to the front.
@@ -122,7 +123,10 @@ func run(global *cliGlobal) error {
 		var client *http.Client
 		if *global.address != "" {
 			transport := createCustomTransport(*global.address)
-			client = &http.Client{Transport: transport}
+			doNotFollowRedirects := func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
+			client = &http.Client{CheckRedirect: doNotFollowRedirects, Transport: transport}
 		} else {
 			client = &http.Client{}
 		}
@@ -149,10 +153,13 @@ func run(global *cliGlobal) error {
 
 			if subject == cert.Subject.CommonName {
 				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+				certFound = true
 			} else if contains(cert.DNSNames, subject) {
 				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+				certFound = true
 			} else if contains(cert.DNSNames, subjectStarDomain) {
 				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+				certFound = true
 			} else {
 				slog.Debug("Subject not found, probably chain cert")
 				continue
@@ -205,6 +212,21 @@ func run(global *cliGlobal) error {
 				)
 			}
 		}
+
+		if !certFound {
+			attachment := slack.Attachment{
+				Title:     subject,
+				TitleLink: subjectLink,
+				Pretext:   fmt.Sprintf(":warning: TLS cert for %v was not found", subject),
+				Color:     "danger",
+			}
+			slackMessageAttachments = append(slackMessageAttachments, attachment)
+			slog.Error(
+				"cert info not found",
+				"status", "NotFound",
+				"subject", subject,
+			)
+		}
 	}
 
 	if *global.slackToken != "" {
@@ -249,7 +271,7 @@ func sendSlackMessage(token string, message []slack.Attachment) error {
 
 		conversationParameters := &slack.GetConversationsParameters{
 			Limit:           1000,
-			ExcludeArchived: "true",
+			ExcludeArchived: true,
 			Types:           []string{"public_channel", "private_channel", "mpim", "im"},
 		}
 		channels, _, err := api.GetConversations(conversationParameters)
