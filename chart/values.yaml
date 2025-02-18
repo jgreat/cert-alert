@@ -23,6 +23,7 @@ schedule: "@daily"
 
 image:
   repository: jgreat/cert-alert
+  tag: latest
   pullPolicy: Always
 
 imagePullSecrets: []
