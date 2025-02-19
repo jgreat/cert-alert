@@ -6,7 +6,7 @@ secret:
   # optional external secret
   externalName: cert-alert
   # Included secret data.
-  # data:
+  data:
     # SLACK_TOKEN: ""
 
 configMap:
