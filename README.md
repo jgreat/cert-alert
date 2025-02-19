@@ -4,7 +4,7 @@ Simple service to check a list of domains to see if the certs are about to expir
 Published as a docker container https://hub.docker.com/repository/docker/jgreat/cert-alert
 
 ```plain
-Usage: cert-alert --subjects=SUBJECTS,...
+Usage: cert-alert --subjects=SUBJECT
 
 Connect to websites to see if certs are about to expire.
 Send alerts to slack if --slack-token is defined.
@@ -12,8 +12,9 @@ Send alerts to slack if --slack-token is defined.
 Flags:
   --help                     Show this message
   --slack-token=STRING       Token for slack. Will post to all channels @cert-alert is invited to. ($SLACK_TOKEN)
+  --slack-description=STRING Description to send with slack messages. $(SLACK_DESCRIPTION)
   --renew-before=10          Renew days before cert expiration ($RENEW_BEFORE)
-  --subjects=SUBJECTS,...    List of certificate subjects (hostnames) to check. ($SUBJECTS)
+  --subject=SUBJECT          Certificate subject (hostname) to check. ($SUBJECT)
   --address=IP:PORT          Use IP:PORT address listed instead of DNS lookup to connect to server ($ADDRESS)
   --debug                    Debug logging
   --version                  Show version and exit
@@ -26,7 +27,7 @@ Version: 0.0.1
 ```plain
 docker run -it --rm \
     -e SLACK_TOKEN="xoxb-....." \
-    -e SUBJECTS="google.com,my.site.com,example.com" \
+    -e SUBJECT="my.site.com" \
     jgreat/cert-alert
 ```
 
