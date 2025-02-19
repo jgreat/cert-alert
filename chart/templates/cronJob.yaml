@@ -16,25 +16,31 @@ spec:
       backoffLimit: 1
       completions: 1
       template:
+        metadata:
+          annotations:
+            {{- toYaml .Values.podAnnotations | nindent 12 }}
+          labels:
+            app: cert-alert
+            {{- include "cert-alert.labels" . | nindent 12 }}
         spec:
           imagePullSecrets:
             {{- toYaml .Values.imagePullSecrets | nindent 12 }}
           containers:
-            - name: cert-alert
-              securityContext:
-                {{- toYaml .Values.securityContext | nindent 16 }}
-              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-              imagePullPolicy: {{ .Values.image.pullPolicy }}
-              envFrom:
-              - configMapRef:
-                  name: {{ include "cert-alert.fullname" . }}
-              - secretRef:
-                  name: {{ include "cert-alert.fullname" . }}
-              - secretRef:
-                  name: {{ .Values.secret.externalName }}
-                  optional: true
-              resources:
-                {{- toYaml .Values.resources | nindent 16 }}
+          - name: cert-alert
+            securityContext:
+              {{- toYaml .Values.securityContext | nindent 14 }}
+            image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            envFrom:
+            - configMapRef:
+                name: {{ include "cert-alert.fullname" . }}
+            - secretRef:
+                name: {{ include "cert-alert.fullname" . }}
+            - secretRef:
+                name: {{ .Values.secret.externalName }}
+                optional: true
+            resources:
+              {{- toYaml .Values.resources | nindent 14 }}
           restartPolicy: Never
           nodeSelector:
             {{- toYaml .Values.nodeSelector | nindent 12 }}
