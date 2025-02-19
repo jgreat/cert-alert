@@ -19,9 +19,11 @@ configMap:
     # If you set this all hostnames under SUBJECTS will use this address.
     ADDRESS: ""
     # Slack Description - Use to identify the subject/address source.
-    DESCRIPTION: ""
+    SLACK_DESCRIPTION: ""
 
 schedule: "@daily"
+
+podAnnotations: {}
 
 image:
   repository: jgreat/cert-alert
