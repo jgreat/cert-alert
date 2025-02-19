@@ -25,19 +25,21 @@ type certificateDates struct {
 }
 
 type cliGlobal struct {
-	slackToken  *string
-	renewBefore *string
-	subjects    *string
-	address     *string
-	version     *bool
-	debug       *bool
+	address          *string
+	debug            *bool
+	renewBefore      *string
+	slackDescription *string
+	slackToken       *string
+	subject          *string
+	version          *bool
 }
 
 func main() {
 	flags := &cliGlobal{}
 	flags.slackToken = flag.String("slack-token", os.Getenv("SLACK_TOKEN"), "")
+	flags.slackDescription = flag.String("slack-description", os.Getenv("SLACK_DESCRIPTION"), "")
 	flags.renewBefore = flag.String("renew-before", os.Getenv("RENEW_BEFORE"), "")
-	flags.subjects = flag.String("subjects", os.Getenv("SUBJECTS"), "")
+	flags.subject = flag.String("subject", os.Getenv("SUBJECT"), "")
 	flags.address = flag.String("address", os.Getenv("ADDRESS"), "")
 	flags.version = flag.Bool("version", false, "")
 	flags.debug = flag.Bool("debug", false, "")
@@ -49,9 +51,9 @@ func main() {
 		fmt.Printf("version: %v\n", version)
 		os.Exit(0)
 	}
-	if *flags.subjects == "" {
+	if *flags.subject == "" {
 		help()
-		fmt.Println("Error: --subjects or $SUBJECTS required")
+		fmt.Println("Error: --subject or $SUBJECT required")
 		os.Exit(1)
 	}
 	if *flags.renewBefore == "" {
@@ -82,17 +84,18 @@ func main() {
 }
 
 func help() {
-	fmt.Printf("Usage: %v --subjects=SUBJECTS,...\n", os.Args[0])
+	fmt.Printf("Usage: %v --subject=SUBJECT\n", os.Args[0])
 	fmt.Println("")
-	fmt.Println("Connect to websites to see if certs are about to expire.")
+	fmt.Println("Connect to a website to see if certs are about to expire.")
 	fmt.Println("Send alerts to slack if --slack-token is defined.")
 	fmt.Println("")
 	fmt.Println("Flags:")
 	fmt.Println("  --help                     Show this message")
 	fmt.Println("  --slack-token=STRING       Token for slack. Will post to all channels @cert-alert is invited to. ($SLACK_TOKEN)")
+	fmt.Println("  --slack-description=STRING Description to send with slack messages. $(SLACK_DESCRIPTION)")
 	fmt.Println("  --renew-before=30          Renew days before cert expiration ($RENEW_BEFORE)")
-	fmt.Println("  --subjects=SUBJECTS,...    List of certificate subjects (hostnames) to check. ($SUBJECTS)")
-	fmt.Println("  --address=ADDRESS          Use IP:PORT address listed instead of DNS lookup to connect to server ($ADDRESS)")
+	fmt.Println("  --subject=SUBJECTS         Certificate subject (hostname) to check. ($SUBJECT)")
+	fmt.Println("  --address=IP:PORT          Use IP:PORT address listed instead of DNS lookup to connect to server ($ADDRESS)")
 	fmt.Println("  --debug                    Enable debug logging")
 	fmt.Println("  --version                  Show version and exit")
 	fmt.Println("")
@@ -102,133 +105,138 @@ func help() {
 
 // Run DefaultCmd - Default command for Kong CLI framework.
 func run(global *cliGlobal) error {
-
-	slog.Debug("Checking certificates for expiration")
+	certFound := false
 	slackMessageAttachments := []slack.Attachment{}
 
-	// break down subjects
-	subjects := strings.Split(*global.subjects, ",")
+	subject := *global.subject
+	subjectLink := fmt.Sprintf("https://%v", subject)
+	// drop the first element from the domain name to get the base domain and add * to the front.
+	subjectSplit := strings.Split(subject, ".")[1:]
+	subjectSplit = slices.Insert(subjectSplit, 0, "*")
+	subjectStarDomain := strings.Join(subjectSplit, ".")
 
-	for _, subject := range subjects {
-		slog.Debug(fmt.Sprintf("Checking %v", subject))
-		certFound := false
-		subjectLink := fmt.Sprintf("https://%v", subject)
+	slog.Debug("Checking certificates for expiration")
+	slog.Debug(fmt.Sprintf("Checking %v", subject))
+	// Don't follow redirects. We just want the cert from the first request.
+	doNotFollowRedirects := func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	client := &http.Client{CheckRedirect: doNotFollowRedirects}
+	// Create a custom HTTP client if the address flag is provided
+	if *global.address != "" {
+		transport := createCustomTransport(*global.address)
+		client = &http.Client{CheckRedirect: doNotFollowRedirects, Transport: transport}
+	}
 
-		// drop the first element from the domain name to get the base domain and add * to the front.
-		subjectSplit := strings.Split(subject, ".")[1:]
-		subjectSplit = slices.Insert(subjectSplit, 0, "*")
-		subjectStarDomain := strings.Join(subjectSplit, ".")
+	resp, err := client.Head(subjectLink)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
-		// Create a custom HTTP client if the address flag is provided
-		var client *http.Client
-		if *global.address != "" {
-			transport := createCustomTransport(*global.address)
-			doNotFollowRedirects := func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			}
-			client = &http.Client{CheckRedirect: doNotFollowRedirects, Transport: transport}
-		} else {
-			client = &http.Client{}
+	certs := resp.TLS.PeerCertificates
+	slog.Debug(fmt.Sprintf("Found %v certificates", len(certs)))
+
+	for _, cert := range certs {
+		pastDue := false
+		certDates := &certificateDates{}
+		renewBefore, err := strconv.Atoi(*global.renewBefore)
+		if err != nil {
+			return err
 		}
 
-		resp, err := client.Head(subjectLink)
-		if err != nil {
-			slog.Error(fmt.Sprintf("%v", err))
+		slog.Debug(fmt.Sprintf("CommonName %v - DNSNames %v", cert.Subject.CommonName, cert.DNSNames))
+
+		if subject == cert.Subject.CommonName {
+			pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+			certFound = true
+		} else if contains(cert.DNSNames, subject) {
+			pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+			certFound = true
+		} else if contains(cert.DNSNames, subjectStarDomain) {
+			pastDue, certDates = isAfterRenewDate(cert, renewBefore)
+			certFound = true
+		} else {
+			slog.Debug("Subject not found, probably chain cert")
 			continue
 		}
-		defer resp.Body.Close()
 
-		certs := resp.TLS.PeerCertificates
-		slog.Debug(fmt.Sprintf("Found %v certificates", len(certs)))
-
-		for _, cert := range certs {
-			pastDue := false
-			certDates := &certificateDates{}
-			renewBefore, err := strconv.Atoi(*global.renewBefore)
-			if err != nil {
-				return err
-			}
-
-			slog.Debug(fmt.Sprintf("CommonName %v - DNSNames %v", cert.Subject.CommonName, cert.DNSNames))
-
-			if subject == cert.Subject.CommonName {
-				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
-				certFound = true
-			} else if contains(cert.DNSNames, subject) {
-				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
-				certFound = true
-			} else if contains(cert.DNSNames, subjectStarDomain) {
-				pastDue, certDates = isAfterRenewDate(cert, renewBefore)
-				certFound = true
-			} else {
-				slog.Debug("Subject not found, probably chain cert")
-				continue
-			}
-
-			if pastDue {
-				slog.Info(
-					"cert info found",
-					"status", "PastDue",
-					"subject", subject,
-					"expires_on", fmt.Sprintf("%v", cert.NotAfter),
-					"renew_before", fmt.Sprintf("%v", certDates.renewBeforeDate),
-				)
-				attachment := slack.Attachment{
-					Title:     subject,
-					TitleLink: subjectLink,
-					Pretext:   fmt.Sprintf(":warning: TLS cert for %v will expire in less than %v days.", subject, renewBefore),
-					Color:     "danger",
-					Fields: []slack.AttachmentField{
-						{
-							Title: "Certificate Expires",
-							Value: certDates.expirationDate.UTC().Format("Mon Jan 2 15:04:05 MST 2006"),
-						},
-						{
-							Title: "Certificate Renew By",
-							Value: certDates.renewBeforeDate.UTC().Format("Mon Jan 2 15:04:05 MST 2006"),
-						},
-						{
-							Title: "Certificate Issued By",
-							Value: cert.Issuer.CommonName,
-						},
-						{
-							Title: "Subject Common Name",
-							Value: cert.Subject.CommonName,
-						},
-						{
-							Title: "Subject Alternative Names",
-							Value: strings.Join(cert.DNSNames, "\n"),
-						},
-					},
-				}
-				slackMessageAttachments = append(slackMessageAttachments, attachment)
-			} else {
-				slog.Info(
-					"cert info found",
-					"status", "OK",
-					"subject", subject,
-					"expires_on", fmt.Sprintf("%v", cert.NotAfter),
-					"renew_before", fmt.Sprintf("%v", certDates.renewBeforeDate),
-				)
-			}
-		}
-
-		if !certFound {
+		if pastDue {
+			slog.Info(
+				"cert info found",
+				"status", "PastDue",
+				"subject", subject,
+				"expires_on", fmt.Sprintf("%v", cert.NotAfter),
+				"renew_before", fmt.Sprintf("%v", certDates.renewBeforeDate),
+			)
 			attachment := slack.Attachment{
 				Title:     subject,
 				TitleLink: subjectLink,
-				Pretext:   fmt.Sprintf(":warning: TLS cert for %v was not found", subject),
+				Pretext:   fmt.Sprintf(":warning: TLS cert for %v will expire in less than %v days.", subject, renewBefore),
 				Color:     "danger",
+				Fields: []slack.AttachmentField{
+					{
+						Title: "Description",
+						Value: *global.slackDescription,
+					},
+					{
+						Title: "Certificate Expires",
+						Value: certDates.expirationDate.UTC().Format("Mon Jan 2 15:04:05 MST 2006"),
+					},
+					{
+						Title: "Certificate Renew By",
+						Value: certDates.renewBeforeDate.UTC().Format("Mon Jan 2 15:04:05 MST 2006"),
+					},
+					{
+						Title: "Certificate Issued By",
+						Value: cert.Issuer.CommonName,
+					},
+					{
+						Title: "Subject Common Name",
+						Value: cert.Subject.CommonName,
+					},
+					{
+						Title: "Subject Alternative Names",
+						Value: strings.Join(cert.DNSNames, "\n"),
+					},
+				},
 			}
 			slackMessageAttachments = append(slackMessageAttachments, attachment)
-			slog.Error(
-				"cert info not found",
-				"status", "NotFound",
+		} else {
+			slog.Info(
+				"cert info found",
+				"status", "OK",
 				"subject", subject,
+				"expires_on", fmt.Sprintf("%v", cert.NotAfter),
+				"renew_before", fmt.Sprintf("%v", certDates.renewBeforeDate),
 			)
 		}
 	}
 
+	// Send a message to slack if the cert was not found
+	if !certFound {
+		attachment := slack.Attachment{
+			Title:     subject,
+			TitleLink: subjectLink,
+			Pretext:   fmt.Sprintf(":warning: TLS cert for %v was not found", subject),
+			Color:     "danger",
+			Fields: []slack.AttachmentField{
+				{
+					Title: "Description",
+					Value: *global.slackDescription,
+				},
+			},
+		}
+		slackMessageAttachments = append(slackMessageAttachments, attachment)
+		slog.Error(
+			"cert info not found",
+			"status", "NotFound",
+			"subject", subject,
+		)
+
+	}
+
+	// Send the slack message only if the token is set
 	if *global.slackToken != "" {
 		err := sendSlackMessage(*global.slackToken, slackMessageAttachments)
 		if err != nil {

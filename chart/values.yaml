@@ -14,10 +14,12 @@ configMap:
     # Alert x days before cert expires. cert-manager waits until 30 days before expiration.
     RENEW_BEFORE: "10"
     # comma separated of hostnames to check
-    SUBJECTS: ""
+    SUBJECT: ""
     # IP:PORT to check instead of DNS name
     # If you set this all hostnames under SUBJECTS will use this address.
     ADDRESS: ""
+    # Slack Description - Use to identify the subject/address source.
+    DESCRIPTION: ""
 
 schedule: "@daily"
 
