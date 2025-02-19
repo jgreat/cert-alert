@@ -15,7 +15,9 @@
 vendor/
 .vscode/
 
+# ignore the binary but not directories with the same name
 cert-alert
+!cert-alert/
 
 env.sh
 build/
